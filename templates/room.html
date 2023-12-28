@@ -24,7 +24,7 @@
   <div class="info-sections">
       <div class="members-container">
           <h3 class="members-title">Members:</h3>
-          <ul id="members-list">
+          <ul class="members-list" id="members-list">
               {% for member in members %}
               <li>{{ member.username }}{% if member.id == room.admin_id %} (admin){% endif %}</li>
               {% endfor %}
@@ -82,19 +82,5 @@
         messages.innerHTML += '<div>' + data.msg + '</div>'; // Update as needed
     }
     });
-    socket.on('update_members', function(data) {
-    var membersList = document.getElementById('members-list');
-    membersList.innerHTML = '';  // Clear existing list
-
-    data.members.forEach(function(member) {
-        var li = document.createElement('li');
-        li.textContent = member.username;
-        // Check if the member is the admin
-        if (member.id === ADMIN_ID) {  // Replace ADMIN_ID with the admin's ID
-            li.textContent += " (admin)";
-        }
-        membersList.appendChild(li);
-    });
-});
 </script>
 {% endblock %}

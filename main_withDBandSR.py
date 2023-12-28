@@ -19,7 +19,8 @@ db = SQLAlchemy(app)
 app.config["SECRET_KEY"] = "hermes"
 socketio = SocketIO(app)
 
-
+# client_id = "***"
+# client_secret = "***"
 
 client_id = "***"
 client_secret = "***"
@@ -59,6 +60,7 @@ class Room(db.Model):
 class Membership(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key=True)
     room_id = db.Column(db.Integer, db.ForeignKey('room.id'), primary_key=True)
+    joined_message_sent = db.Column(db.Boolean, default=False)
 
 class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -157,7 +159,8 @@ def add_song_if_not_exists(name, spotify_id):
     return existing_song
 
 def assign_songs_to_room(room, song_ids):
-    for song_id in song_ids:
+    set_song_ids = set(song_ids)
+    for song_id in set_song_ids:
         song = Song.query.get(song_id)
         if song:
             room.songs.append(song)
@@ -233,6 +236,14 @@ def home():
                 new_membership = Membership(user_id=user_id, room_id=room.id)
                 db.session.add(new_membership)
                 db.session.commit()
+
+                # join_message = f"{user.username} has joined the group."
+                # socketio.emit('receive_message', {'msg': f'{user.username}: {join_message}'}, room=room_code)
+
+                # # Optionally, you could save this message to the database as well
+                # new_message = Message(content=join_message, user_id=user_id, room_id=room.id)
+                # db.session.add(new_message)
+                # db.session.commit() 
                 
                 session["room_code"] = code
                 return redirect(url_for("rate_songs", code=code))
@@ -398,14 +409,22 @@ def on_join(data):
     
     join_room(room_code)
 
-    memberships = Membership.query.filter_by(room_id=room.id).all()
-    members = [{'username': User.query.get(membership.user_id).username, 'id': membership.user_id} for membership in memberships]
-    # for i in members:
-        #print(i['username'])
-        
+    # memberships = Membership.query.filter_by(room_id=room.id).all()
+    # members = [{'username': User.query.get(membership.user_id).username, 'id': membership.user_id} for membership in memberships]
     # emit('update_members', {'members': members}, room=room_code)
 
     # Check if the room is full
+    membership = Membership.query.filter_by(user_id=user_id, room_id=room.id).first()
+    if membership and not membership.joined_message_sent:
+        join_message = f"Joined the group."
+        emit('receive_message', {'msg': f'{new_message.user.username}: {join_message}'}, room=room_code)
+        # emit('receive_message', {'msg': join_message}, room=room_code)
+        membership.joined_message_sent = True
+        db.session.commit()
+        new_message = Message(content=join_message, user_id=user.id, room_id=room.id)
+        db.session.add(new_message)
+        db.session.commit()
+
     member_count = Membership.query.filter_by(room_id=room.id).count()
     if member_count >= room.max_members:
         # Room is full - send a message to the room from the admin
@@ -441,6 +460,7 @@ def on_join(data):
             db.session.commit()
             # emit('receive_message', {'msg': f'{admin.username}: {admin_message}'}, room=room_code)
     
+
     if room.pinned_message:
         emit('receive_message', {'msg': room.pinned_message, 'pinned': True}, room=room_code)
     # Additional logic for when a user joins a room
@@ -462,6 +482,7 @@ def handle_send_message_event(data):
     db.session.commit()
 
     emit('receive_message', {'msg': f'{new_message.user.username}: {message_content}'}, room=room_code)
+    
 
 
 @app.route('/recommendations/<code>')
@@ -493,11 +514,14 @@ def on_leave(data):
     leave_room(room_code)
 
     #room = Room.query.filter_by(code=room_code).first()
-    if room:
-        memberships = Membership.query.filter_by(room_id=room.id).all()
-        members = [{'username': User.query.get(membership.user_id).username, 'id': membership.user_id} for membership in memberships]
+    # if room:
+    #     memberships = Membership.query.filter_by(room_id=room.id).all()
+    #     members = [{'username': User.query.get(membership.user_id).username, 'id': membership.user_id} for membership in memberships]
+    #     emit('update_members', {'members': members}, room=room_code)
         # for i in members:
         #     #print(i['username'])
+
+
 
 @app.route('/logout')
 def logout():
