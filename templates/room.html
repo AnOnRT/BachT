@@ -1,0 +1,100 @@
+<!-- room.html -->
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="chat-container">
+  <div id="chat-room" class="message-box">
+      <h2>Chat Room: {{ room.code }}</h2>
+      <div id="pinned-message-container" class="pinned-message">
+        <!-- This will be populated with the pinned message via JavaScript -->
+      </div>
+      <div id="messages" class="messages">
+          {% for message in past_messages %}
+              <div>{{ message.user.username }}: {{ message.content }}</div>
+          {% endfor %}
+      </div>
+      <form id="message-form">
+          <input type="text" id="message" placeholder="Type a message...">
+          <button type="submit">Send</button>
+      </form>
+  </div>
+  <a href="{{ url_for('home') }}" class="back-to-home-btn">Back to Home</a>
+
+  <!-- Members and songs sections are now inside a separate div under the chat-room -->
+  <div class="info-sections">
+      <div class="members-container">
+          <h3 class="members-title">Members:</h3>
+          <ul id="members-list">
+              {% for member in members %}
+              <li>{{ member.username }}{% if member.id == room.admin_id %} (admin){% endif %}</li>
+              {% endfor %}
+          </ul>
+      </div>
+
+      <div class="songs-container">
+        <h3 class="songs-title">Songs and Ratings:</h3>
+        <ul class="songs-list">
+            {% for song in songs %}
+            <li>
+                <div class="song">
+                    <div class="song-info">
+                        <span class="song-title">{{ song.name }}</span>
+                        <iframe src="https://open.spotify.com/embed/track/{{ song.spotify_id }}" width="300" height="80" frameborder="0" allowtransparency="true" allow="encrypted-media"></iframe>
+                    </div>
+                    <div class="rating">
+                        Your Rating: {{ ratings[song.id] if song.id in ratings else 'Not Rated' }}
+                    </div>
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+  </div>
+  
+</div>
+
+<script type="text/javascript">
+    var socket = io();
+    
+    socket.on('connect', function() {
+        socket.emit('join', {'room': '{{ room.code }}'});
+    });
+
+    document.getElementById('message-form').onsubmit = function(e) {
+        e.preventDefault();
+        var message = document.getElementById('message').value;
+        socket.emit('send_message', {data: message, room: '{{ room.code }}'});
+        document.getElementById('message').value = '';
+    };
+
+    // socket.on('receive_message', function(data) {
+    //     var messages = document.getElementById('messages');
+    //     messages.innerHTML += '<div>' + data.msg + '</div>';  // Update as needed
+    // });
+    socket.on('receive_message', function(data) {
+    if (data.pinned) {
+        // Handle pinned message
+        var pinnedContainer = document.getElementById('pinned-message-container');
+        pinnedContainer.innerHTML = data.msg; // Or use some templating to make it look nice
+    } else {
+        // Handle regular chat message
+        var messages = document.getElementById('messages');
+        messages.innerHTML += '<div>' + data.msg + '</div>'; // Update as needed
+    }
+    });
+    socket.on('update_members', function(data) {
+    var membersList = document.getElementById('members-list');
+    membersList.innerHTML = '';  // Clear existing list
+
+    data.members.forEach(function(member) {
+        var li = document.createElement('li');
+        li.textContent = member.username;
+        // Check if the member is the admin
+        if (member.id === ADMIN_ID) {  // Replace ADMIN_ID with the admin's ID
+            li.textContent += " (admin)";
+        }
+        membersList.appendChild(li);
+    });
+});
+</script>
+{% endblock %}

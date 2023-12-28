@@ -1,0 +1,274 @@
+from flask import Flask, copy_current_request_context, render_template, request, redirect, session, url_for
+from flask_socketio import join_room, leave_room, send, SocketIO
+from flask_socketio import emit
+
+import random
+from string import ascii_letters, ascii_lowercase, ascii_uppercase
+
+from check_spotify import *
+
+online_users = {}  # Dictionary to keep track of online status
+disconnect_timers = {}
+
+app = Flask(__name__)
+
+app.config["SECRET_KEY"] = "hermes"
+socketio = SocketIO(app) 
+client_id = 'clid'
+client_secret = 'clsec'
+
+rooms = {}
+
+def generate_unique_code(length):
+    while True:
+        code = ""
+        for _ in range(length):
+            code += random.choice(ascii_uppercase)
+        if code not in rooms:
+            break
+    return code
+
+def get_spotify_songs():
+    songs = get_random_songs(client_id, client_secret)
+    # songs = ["song1", "song2", "song3", "song4", "song5", "song6", "song7", "song8", "song9", "song10"]
+    return songs
+
+
+@app.route("/", methods=["POST", "GET"])
+def home():
+    session.clear()
+    if request.method == "POST":
+        name = request.form.get("name")
+        code = request.form.get("code")
+        join = request.form.get("join", False)
+        create = request.form.get("create", False)
+        max_members = request.form.get("max_members", type=int)
+    
+        if not name:
+            return render_template("home.html", error="Please enter a name.", code=code, name=name)
+        
+        if join != False and not code:
+            return render_template("home.html", error="Please enter a room code.", code=code, name=name)
+
+        # if (join == False and (not code or code == "")):
+        #     return render_template("home.html", error="Please enter a room code.", code=code, name=name)
+        
+        room = code
+        if create != False:
+            room = generate_unique_code(4)
+            # rooms[room] = {"members": 0, "messages": []}
+            #Added
+            if max_members == None:
+                return render_template("home.html", error="Please enter a max number of members.", code=code, name=name)
+            else:
+                rooms[room] = {"members_count": 0, 
+                               "messages": [],
+                               "members": [],
+                               "max_members": max_members,
+                                "admin": name, 
+                                "songs": [], 
+                                "username": name}
+        elif code not in rooms:
+            return render_template("home.html", error="Room does not exist.", code=code, name=name)
+        elif rooms[room]["members_count"] >= rooms[code]["max_members"]:
+            # print("The current number of members are", rooms[code]["members"])
+            # print("The maximum number of members are", rooms[code]["max_members"])
+            return render_template("home.html", error="The room is full", code=code, name=name)
+        
+        session["room"] = room
+        session["name"] = name
+
+        return redirect(url_for("rate_songs", code=room))
+        # return redirect(url_for("room", code=room))
+
+    return render_template("home.html")
+
+
+@app.route("/room/<code>")
+def room(code):
+    
+    room = session.get("room")
+    if room is None or session.get("name") is None or room not in rooms:
+        return redirect(url_for("home"))
+    
+    session["room"] = code
+
+    # Render the room template with the correct room code and messages
+    return render_template("room.html", code=code, messages = rooms[code]["messages"])
+    # return render_template("room.html", code = room, messages = rooms[room]["messages"])
+
+@app.route("/rate_songs/<code>")
+def rate_songs(code):
+    room = session.get("room")
+    # name = session.get("name")
+    if room is None or session.get("name") is None or room not in rooms:
+        return redirect(url_for("home"))
+    
+    session["room"] = code
+
+    # if name == rooms[code]["admin"]:
+    #     return redirect(url_for("room", code=code))
+
+    if rooms[code]["songs"] == []:
+        songs = get_spotify_songs()
+        rooms[code]["songs"] = songs
+    
+    songs = rooms[code]["songs"]
+
+    return render_template("rate_songs.html", songs=songs, room_code=code)
+
+@app.route("/submit_ratings/<code>", methods=["POST"])
+def submit_ratings(code):
+    # Process form data and store ratings
+    name = session.get("name")
+    print("Name is=============================", name)
+    ratings = {key: int(request.form[key]) for key in request.form}
+    print(ratings.keys())
+    print(ratings.values())
+    
+    # Example of storing ratings in a dictionary
+    # You might need to adjust the structure based on your requirements
+    if code not in rooms:
+        return redirect(url_for("home"))  # Redirect to home if room doesn't exist
+
+    rooms[code]["ratings"] = ratings
+
+    # Redirect to the chat room after storing ratings
+    return redirect(url_for("room", code=code))
+
+@socketio.on("message")
+def message(data):
+    room = session.get("room")
+    if room not in rooms:
+        return
+    
+    content = {
+        "name": session.get("name"),
+        "message" : data["data"]
+    }
+
+    send(content, to=room)
+    rooms[room]["messages"].append(content)
+
+    print(f"{session.get('name')} said: {data['data']}")
+
+@socketio.on("connect")
+def connect(auth):
+    room = session.get("room")
+    name = session.get("name")
+    if not room or not name:
+        return
+    
+    if room not in rooms:
+        leave_room(room)
+        return
+    
+    if name in disconnect_timers:
+        disconnect_timers[name] = False
+
+    join_room(room)
+    send({"name":name, "message": "has entered the room"}, to=room)
+    rooms[room]["members_count"] += 1
+    print(f"{name} joined to room {room}")
+    if rooms[room]["members_count"] >= rooms[room]["max_members"]:
+        admin_message = "The chat is now full. Let's get started!"
+        admin_name = rooms[room]["admin"]  # Assuming you store the admin's name when creating the room
+        emit("message", {"name": admin_name, "message": admin_message}, room=room)
+    print(rooms[room]["members_count"])
+        
+
+def delayed_disconnect(name, room):
+    # Wait for a certain amount of time before actually disconnecting
+    socketio.sleep(10)  # Delay time in seconds
+    
+    # Check if the disconnect flag is still true for this user_id
+    if disconnect_timers.get(name, False):
+        leave_room(room)
+        if room in rooms:
+            rooms[room]["members_count"] -=1
+            if rooms[room]["members_count"] <=0:
+                del rooms[room]
+        
+        send({"name":name, "message": "has left the room"}, to=room)
+        print(f"{name} has left the room {room}")
+
+@socketio.on("disconnect")
+def disconnect():
+    room = session.get("room")
+    name = session.get("name")
+    
+    @copy_current_request_context
+    def disconnect_after_timeout():
+        # Wait for a certain amount of time before actually disconnecting
+        socketio.sleep(10)  # Delay time in seconds
+        
+        # Check if the user is still marked for disconnection
+        if disconnect_timers.get(name, True):
+            leave_room(room)
+            if room in rooms:
+                rooms[room]["members_count"] -=1
+                if rooms[room]["members_count"] <=0:
+                    del rooms[room]
+            send({"name":name, "message": "has left the room"}, to=room)
+    
+    # Mark the user for potential disconnection
+    disconnect_timers[name] = True
+    # Start the background task
+    socketio.start_background_task(disconnect_after_timeout)
+
+
+    # leave_room(room)
+    
+    # if room in rooms:
+    #     rooms[room]["members_count"] -=1
+    #     if rooms[room]["members_count"] <=0:
+    #         del rooms[room]
+    
+    # send({"name":name, "message": "has left the room"}, to=room)
+    # print(f"{name} has left the room {room}")
+
+###############################################################
+
+
+
+if __name__ == "__main__":
+    socketio.run(app, debug=True, port=5000)
+
+
+
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(120), unique=True, nullable=False)
+    messages = db.relationship('Message', backref='user', lazy=True)
+    ratings = db.relationship('Rating', backref='user', lazy=True)
+
+class Room(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(80), unique=True, nullable=False)
+    max_members = db.Column(db.Integer, nullable=False)
+    admin_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    messages = db.relationship('Message', backref='room', lazy=True)
+    songs = db.relationship('Song', secondary=room_songs, lazy='subquery', backref=db.backref('rooms', lazy=True))
+
+class Membership(db.Model):
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key=True)
+    room_id = db.Column(db.Integer, db.ForeignKey('room.id'), primary_key=True)
+
+class Message(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    content = db.Column(db.Text, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    room_id = db.Column(db.Integer, db.ForeignKey('room.id'), nullable=False)
+
+class Song(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    spotify_id = db.Column(db.String(200), nullable=False)
+
+class Rating(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    value = db.Column(db.Integer, nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    song_id = db.Column(db.Integer, db.ForeignKey('song.id'), nullable=False)
+    room_id = db.Column(db.Integer, db.ForeignKey('room.id'), nullable=False)
