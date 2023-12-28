@@ -275,6 +275,11 @@ def rate_songs(code):
     if not room:
         return redirect(url_for('home'))
     
+    membership = Membership.query.filter_by(user_id=user_id, room_id=room.id).first()
+    if not membership:
+        # User is not a member of the room, handle accordingly
+        return "Access Denied", 403
+    
     songs = room.songs
     existing_ratings = Rating.query.filter_by(user_id=user_id, room_id=room.id).all()
     if existing_ratings:
@@ -417,7 +422,7 @@ def on_join(data):
     membership = Membership.query.filter_by(user_id=user_id, room_id=room.id).first()
     if membership and not membership.joined_message_sent:
         join_message = f"Joined the group."
-        emit('receive_message', {'msg': f'{new_message.user.username}: {join_message}'}, room=room_code)
+        emit('receive_message', {'msg': f'{user.username}: {join_message}'}, room=room_code)
         # emit('receive_message', {'msg': join_message}, room=room_code)
         membership.joined_message_sent = True
         db.session.commit()
