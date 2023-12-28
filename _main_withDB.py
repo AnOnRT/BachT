@@ -10,7 +10,7 @@ from string import ascii_letters, ascii_lowercase, ascii_uppercase
 from _check_spotify import *
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = "sqlite:////Users/arturpapyan/Desktop/Bachelor thesis/BT_forMac/db/chat.db"
+app.config['SQLALCHEMY_DATABASE_URI'] = "sqlite:////Path/db/chat.db"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
